@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 3 * * 1'  # Every Monday 3am UTC
   workflow_dispatch:      # Manual trigger
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild even if Railway image unchanged'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -39,7 +44,7 @@ jobs:
             CACHED_DIGEST=$(docker inspect ghcr.io/${OWNER}/postgres-pgvector-ssl:latest --format '{{index .Config.Labels "railway.digest"}}' 2>/dev/null || echo "")
           fi
           echo "cached_digest=$CACHED_DIGEST" >> $GITHUB_OUTPUT
-          if [ "$CACHED_DIGEST" = "${{ steps.railway.outputs.digest }}" ]; then
+          if [ "$CACHED_DIGEST" = "${{ steps.railway.outputs.digest }}" ] && [ "${{ inputs.force_rebuild }}" != "true" ]; then
             echo "rebuild=false" >> $GITHUB_OUTPUT
             echo "No change in Railway image, skipping build."
           else
