@@ -26,12 +26,17 @@ jobs:
           echo "Railway digest: $DIGEST"
           echo "PG_MAJOR: $PG_MAJOR"
 
+      - name: Set lowercase owner
+        id: owner
+        run: echo "name=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Check if rebuild needed
         id: check
         run: |
+          OWNER=${{ steps.owner.outputs.name }}
           CACHED_DIGEST=""
-          if docker pull ghcr.io/${{ github.repository_owner }}/postgres-pgvector-ssl:latest 2>/dev/null; then
-            CACHED_DIGEST=$(docker inspect ghcr.io/${{ github.repository_owner }}/postgres-pgvector-ssl:latest --format '{{index .Config.Labels "railway.digest"}}' 2>/dev/null || echo "")
+          if docker pull ghcr.io/${OWNER}/postgres-pgvector-ssl:latest 2>/dev/null; then
+            CACHED_DIGEST=$(docker inspect ghcr.io/${OWNER}/postgres-pgvector-ssl:latest --format '{{index .Config.Labels "railway.digest"}}' 2>/dev/null || echo "")
           fi
           echo "cached_digest=$CACHED_DIGEST" >> $GITHUB_OUTPUT
           if [ "$CACHED_DIGEST" = "${{ steps.railway.outputs.digest }}" ]; then
@@ -57,7 +62,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/postgres-pgvector-ssl:latest
-            ghcr.io/${{ github.repository_owner }}/postgres-pgvector-ssl:${{ steps.railway.outputs.pg_major }}
+            ghcr.io/${{ steps.owner.outputs.name }}/postgres-pgvector-ssl:latest
+            ghcr.io/${{ steps.owner.outputs.name }}/postgres-pgvector-ssl:${{ steps.railway.outputs.pg_major }}
           labels: |
             railway.digest=${{ steps.railway.outputs.digest }}
