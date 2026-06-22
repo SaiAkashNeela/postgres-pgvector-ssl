@@ -1,0 +1,63 @@
+name: Build and Push postgres-pgvector-ssl
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'  # Every Monday 3am UTC
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get Railway image digest
+        id: railway
+        run: |
+          docker pull ghcr.io/railwayapp-templates/postgres-ssl:latest
+          DIGEST=$(docker inspect ghcr.io/railwayapp-templates/postgres-ssl:latest --format '{{index .RepoDigests 0}}')
+          PG_MAJOR=$(docker inspect ghcr.io/railwayapp-templates/postgres-ssl:latest --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "PG_MAJOR"}}{{index (split . "=") 1}}{{end}}{{end}}')
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "pg_major=$PG_MAJOR" >> $GITHUB_OUTPUT
+          echo "Railway digest: $DIGEST"
+          echo "PG_MAJOR: $PG_MAJOR"
+
+      - name: Check if rebuild needed
+        id: check
+        run: |
+          CACHED_DIGEST=""
+          if docker pull ghcr.io/${{ github.repository_owner }}/postgres-pgvector-ssl:latest 2>/dev/null; then
+            CACHED_DIGEST=$(docker inspect ghcr.io/${{ github.repository_owner }}/postgres-pgvector-ssl:latest --format '{{index .Config.Labels "railway.digest"}}' 2>/dev/null || echo "")
+          fi
+          echo "cached_digest=$CACHED_DIGEST" >> $GITHUB_OUTPUT
+          if [ "$CACHED_DIGEST" = "${{ steps.railway.outputs.digest }}" ]; then
+            echo "rebuild=false" >> $GITHUB_OUTPUT
+            echo "No change in Railway image, skipping build."
+          else
+            echo "rebuild=true" >> $GITHUB_OUTPUT
+            echo "Railway image changed, rebuilding."
+          fi
+
+      - name: Log in to ghcr.io
+        if: steps.check.outputs.rebuild == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        if: steps.check.outputs.rebuild == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/postgres-pgvector-ssl:latest
+            ghcr.io/${{ github.repository_owner }}/postgres-pgvector-ssl:${{ steps.railway.outputs.pg_major }}
+          labels: |
+            railway.digest=${{ steps.railway.outputs.digest }}
