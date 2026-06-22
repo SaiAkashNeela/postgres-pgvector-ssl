@@ -11,8 +11,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-arivulabs}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-securepassword123}
-      # Force initdb to configure all local and host connections to require scram-sha-256 passwords
-      POSTGRES_INITDB_ARGS: "--auth-local=scram-sha-256 --auth-host=scram-sha-256"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
