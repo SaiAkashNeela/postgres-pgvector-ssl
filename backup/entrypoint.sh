@@ -8,7 +8,7 @@ echo "[entrypoint] Backup keep days: ${BACKUP_KEEP_DAYS:-14}"
 
 # Write crontab for BusyBox crond
 mkdir -p /etc/crontabs
-echo "$BACKUP_SCHEDULE /usr/local/bin/backup.sh 2>&1" > /etc/crontabs/root
+echo "$BACKUP_SCHEDULE /usr/local/bin/backup.sh >> /proc/1/fd/1 2>&1" > /etc/crontabs/root
 
 # Initial backup on start
 echo "[entrypoint] Running initial backup on start..."
