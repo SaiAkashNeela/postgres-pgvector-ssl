@@ -2,8 +2,7 @@ version: '3.8'
 
 services:
   managed-postgres:
-    build:
-      context: .
+    image: ghcr.io/saiakashneela/postgres-pgvector-ssl:latest
     container_name: managed-postgres
     restart: unless-stopped
     environment:
