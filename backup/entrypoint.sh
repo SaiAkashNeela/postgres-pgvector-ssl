@@ -1,16 +1,18 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
 
 BACKUP_SCHEDULE="${BACKUP_SCHEDULE:-0 2 * * *}"
 
 echo "[entrypoint] Schedule: $BACKUP_SCHEDULE"
+echo "[entrypoint] Backup keep days: ${BACKUP_KEEP_DAYS:-7}"
 
-# Write crontab
-echo "$BACKUP_SCHEDULE /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1" > /etc/crontabs/root
+# Write crontab — redirect to stdout/stderr so docker logs captures it
+echo "$BACKUP_SCHEDULE /usr/local/bin/backup.sh 2>&1" | crontab -
 
-# Run a backup immediately on first start so you know it works
-echo "[entrypoint] Running initial backup..."
-/usr/local/bin/backup.sh || echo "[entrypoint] Initial backup failed — check logs"
+# Initial backup on start — proves credentials work immediately
+echo "[entrypoint] Running initial backup on start..."
+/usr/local/bin/backup.sh || echo "[entrypoint] WARNING: Initial backup failed — check config"
 
 echo "[entrypoint] Starting cron daemon..."
-exec crond -f -l 2 -L /var/log/cron.log
+# -f = foreground, -l 6 = log level notice
+exec crond -f -l 6

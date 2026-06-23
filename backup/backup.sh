@@ -1,7 +1,8 @@
-#!/bin/sh
-set -e
+#!/bin/bash
+set -euo pipefail
 
-log() { echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] $*"; }
+log()  { echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] $*"; }
+fail() { log "ERROR: $*" >&2; exit 1; }
 
 # Required
 : "${POSTGRES_HOST:?POSTGRES_HOST required}"
@@ -12,60 +13,81 @@ log() { echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] $*"; }
 BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-7}"
 S3_PREFIX="${S3_PREFIX:-postgres-backups}"
 TIMESTAMP=$(date -u '+%Y%m%d_%H%M%S')
+PGCONNECT_TIMEOUT=10
 
 export PGPASSWORD="$POSTGRES_PASSWORD"
+export PGCONNECT_TIMEOUT
 
-# Build aws CLI endpoint arg (for R2 or custom S3-compatible)
-AWS_ARGS=""
-if [ -n "$S3_ENDPOINT" ]; then
-    AWS_ARGS="--endpoint-url $S3_ENDPOINT"
-fi
+AWS_ARGS=()
+[ -n "${S3_ENDPOINT:-}" ] && AWS_ARGS+=(--endpoint-url "$S3_ENDPOINT")
 
-log "Starting backup run"
+log "Starting backup (host=$POSTGRES_HOST user=$POSTGRES_USER)"
 
-# Get all non-template databases
+# Verify connection before attempting any dumps
+psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -c '\q' \
+    || fail "Cannot connect to postgres at $POSTGRES_HOST"
+
+# Get all non-template, non-system databases
 DATABASES=$(psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -tAq \
-    -c "SELECT datname FROM pg_database WHERE datistemplate = false AND datname != 'postgres';")
+    -c "SELECT datname FROM pg_database
+        WHERE datistemplate = false
+          AND datname NOT IN ('postgres')
+        ORDER BY datname;")
+
+[ -z "$DATABASES" ] && fail "No databases found"
 
 FAILED=0
+SUCCEEDED=0
+
 for DB in $DATABASES; do
-    FILENAME="${TIMESTAMP}_${DB}.sql.gz"
+    FILENAME="${TIMESTAMP}_${DB}.dump"
     S3_KEY="${S3_PREFIX}/${FILENAME}"
 
-    log "Dumping $DB..."
-    if pg_dump -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d "$DB" \
-        --no-password --clean --if-exists --create --format=plain \
-        | gzip -9 \
-        | aws s3 cp $AWS_ARGS - "s3://${S3_BUCKET}/${S3_KEY}" \
-            --storage-class STANDARD; then
-        log "Uploaded $DB -> s3://${S3_BUCKET}/${S3_KEY}"
+    log "Dumping $DB -> s3://${S3_BUCKET}/${S3_KEY}"
+
+    # -Fc = custom format: compressed, supports parallel restore & selective restore
+    # Stream directly to S3 — pipefail ensures any stage failure is caught
+    if pg_dump \
+            -h "$POSTGRES_HOST" \
+            -U "$POSTGRES_USER" \
+            -d "$DB" \
+            --no-password \
+            --format=custom \
+            --compress=9 \
+            --lock-wait-timeout=30s \
+            --no-privileges \
+            --no-owner \
+        | aws s3 cp "${AWS_ARGS[@]}" \
+            --storage-class STANDARD \
+            --expected-size 1 \
+            - "s3://${S3_BUCKET}/${S3_KEY}"; then
+
+        SIZE=$(aws s3 ls "${AWS_ARGS[@]}" "s3://${S3_BUCKET}/${S3_KEY}" \
+            | awk '{print $3}')
+        [ "${SIZE:-0}" -gt 0 ] || fail "$DB backup uploaded as 0 bytes"
+        log "OK: $DB ($SIZE bytes)"
+        SUCCEEDED=$((SUCCEEDED + 1))
     else
-        log "ERROR: Failed to backup $DB"
+        log "FAILED: $DB"
         FAILED=$((FAILED + 1))
     fi
 done
 
-# Cleanup old backups beyond retention window
-log "Cleaning up backups older than ${BACKUP_KEEP_DAYS} days..."
-CUTOFF=$(date -u -d "${BACKUP_KEEP_DAYS} days ago" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
-    || date -u -v-${BACKUP_KEEP_DAYS}d '+%Y-%m-%dT%H:%M:%SZ')
+# Prune backups older than retention window
+log "Pruning backups older than ${BACKUP_KEEP_DAYS} days..."
+CUTOFF=$(date -u -d "${BACKUP_KEEP_DAYS} days ago" '+%Y%m%d' 2>/dev/null \
+    || date -u -v-${BACKUP_KEEP_DAYS}d '+%Y%m%d')
 
-aws s3 ls $AWS_ARGS "s3://${S3_BUCKET}/${S3_PREFIX}/" \
+aws s3 ls "${AWS_ARGS[@]}" "s3://${S3_BUCKET}/${S3_PREFIX}/" \
     | awk '{print $NF}' \
-    | while read -r KEY; do
+    | while IFS= read -r KEY; do
         FILE_DATE=$(echo "$KEY" | grep -oE '^[0-9]{8}' | head -1)
-        if [ -n "$FILE_DATE" ]; then
-            FILE_TS="${FILE_DATE:0:4}-${FILE_DATE:4:2}-${FILE_DATE:6:2}T00:00:00Z"
-            if [ "$FILE_TS" \< "$CUTOFF" ]; then
-                log "Deleting old backup: $KEY"
-                aws s3 rm $AWS_ARGS "s3://${S3_BUCKET}/${S3_PREFIX}/${KEY}" || true
-            fi
+        if [ -n "$FILE_DATE" ] && [ "$FILE_DATE" -lt "$CUTOFF" ]; then
+            log "Deleting old backup: $KEY"
+            aws s3 rm "${AWS_ARGS[@]}" "s3://${S3_BUCKET}/${S3_PREFIX}/${KEY}" || true
         fi
     done
 
-if [ "$FAILED" -gt 0 ]; then
-    log "Backup run completed with $FAILED failure(s)"
-    exit 1
-fi
-
-log "Backup run completed successfully"
+log "Done: $SUCCEEDED succeeded, $FAILED failed"
+[ "$FAILED" -gt 0 ] && exit 1
+exit 0
