@@ -10,9 +10,9 @@ fail() { log "ERROR: $*" >&2; exit 1; }
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}"
 : "${S3_BUCKET:?S3_BUCKET required}"
 
-BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-7}"
+BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
 S3_PREFIX="${S3_PREFIX:-postgres-backups}"
-TIMESTAMP=$(date -u '+%Y%m%d_%H%M%S')
+TIMESTAMP=$(date -u '+%d_%m_%Y')
 PGCONNECT_TIMEOUT=10
 
 export PGPASSWORD="$POSTGRES_PASSWORD"
@@ -40,7 +40,7 @@ FAILED=0
 SUCCEEDED=0
 
 for DB in $DATABASES; do
-    FILENAME="${TIMESTAMP}_${DB}.dump"
+    FILENAME="${DB}_backup_${TIMESTAMP}.dump"
     S3_KEY="${S3_PREFIX}/${FILENAME}"
 
     log "Dumping $DB -> s3://${S3_BUCKET}/${S3_KEY}"
@@ -81,10 +81,13 @@ CUTOFF=$(date -u -d "${BACKUP_KEEP_DAYS} days ago" '+%Y%m%d' 2>/dev/null \
 aws s3 ls "${AWS_ARGS[@]}" "s3://${S3_BUCKET}/${S3_PREFIX}/" \
     | awk '{print $NF}' \
     | while IFS= read -r KEY; do
-        FILE_DATE=$(echo "$KEY" | grep -oE '^[0-9]{8}' | head -1)
-        if [ -n "$FILE_DATE" ] && [ "$FILE_DATE" -lt "$CUTOFF" ]; then
-            log "Deleting old backup: $KEY"
-            aws s3 rm "${AWS_ARGS[@]}" "s3://${S3_BUCKET}/${S3_PREFIX}/${KEY}" || true
+        # Extract DD_MM_YYYY from filename pattern: dbname_backup_DD_MM_YYYY.dump
+        if [[ "$KEY" =~ _backup_([0-9]{2})_([0-9]{2})_([0-9]{4})\.dump$ ]]; then
+            FILE_DATE="${BASH_REMATCH[3]}${BASH_REMATCH[2]}${BASH_REMATCH[1]}"
+            if [ "$FILE_DATE" -lt "$CUTOFF" ]; then
+                log "Deleting old backup: $KEY"
+                aws s3 rm "${AWS_ARGS[@]}" "s3://${S3_BUCKET}/${S3_PREFIX}/${KEY}" || true
+            fi
         fi
     done
 
