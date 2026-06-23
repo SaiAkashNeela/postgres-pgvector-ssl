@@ -4,7 +4,6 @@ RUN apk add --no-cache \
     postgresql16-client \
     aws-cli \
     bash \
-    dcron \
     tzdata
 
 COPY backup.sh /usr/local/bin/backup.sh

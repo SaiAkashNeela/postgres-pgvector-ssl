@@ -4,15 +4,15 @@ set -euo pipefail
 BACKUP_SCHEDULE="${BACKUP_SCHEDULE:-0 2 * * *}"
 
 echo "[entrypoint] Schedule: $BACKUP_SCHEDULE"
-echo "[entrypoint] Backup keep days: ${BACKUP_KEEP_DAYS:-7}"
+echo "[entrypoint] Backup keep days: ${BACKUP_KEEP_DAYS:-14}"
 
-# Write crontab — redirect to stdout/stderr so docker logs captures it
-echo "$BACKUP_SCHEDULE /usr/local/bin/backup.sh 2>&1" | crontab -
+# Write crontab for BusyBox crond
+mkdir -p /etc/crontabs
+echo "$BACKUP_SCHEDULE /usr/local/bin/backup.sh 2>&1" > /etc/crontabs/root
 
-# Initial backup on start — proves credentials work immediately
+# Initial backup on start
 echo "[entrypoint] Running initial backup on start..."
 /usr/local/bin/backup.sh || echo "[entrypoint] WARNING: Initial backup failed — check config"
 
 echo "[entrypoint] Starting cron daemon..."
-# -f = foreground, -l 6 = log level notice
-exec crond -f -l 6
+exec busybox crond -f -l 8 -L /dev/stdout

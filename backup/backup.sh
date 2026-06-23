@@ -75,8 +75,7 @@ done
 
 # Prune backups older than retention window
 log "Pruning backups older than ${BACKUP_KEEP_DAYS} days..."
-CUTOFF=$(date -u -d "${BACKUP_KEEP_DAYS} days ago" '+%Y%m%d' 2>/dev/null \
-    || date -u -v-${BACKUP_KEEP_DAYS}d '+%Y%m%d')
+CUTOFF=$(date -u -d "${BACKUP_KEEP_DAYS} days ago" '+%Y%m%d')
 
 aws s3 ls "${AWS_ARGS[@]}" "s3://${S3_BUCKET}/${S3_PREFIX}/" \
     | awk '{print $NF}' \
