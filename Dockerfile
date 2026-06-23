@@ -13,6 +13,7 @@ COPY --chmod=755 pgbackrest-init.sh /docker-entrypoint-initdb.d/99-pgbackrest-in
 COPY --chmod=755 pgbackrest-archive-push-wrapper.sh /usr/local/bin/pgbackrest-archive-push-wrapper.sh
 COPY --chmod=755 pgbackrest-backup-watcher.sh /usr/local/bin/pgbackrest-backup-watcher.sh
 COPY --chmod=755 wrapper.sh /usr/local/bin/wrapper.sh
+COPY --chmod=644 postgres/db/init.sql /docker-entrypoint-initdb.d/init.sql
 
 ENTRYPOINT ["wrapper.sh"]
 CMD ["postgres", "--port=5432"]
