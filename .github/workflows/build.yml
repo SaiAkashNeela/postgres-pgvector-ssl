@@ -3,7 +3,7 @@ name: Build and Push postgres-pgvector-ssl
 on:
   schedule:
     - cron: '0 3 * * 1'  # Every Monday 3am UTC
-  workflow_dispatch:      # Manual trigger
+  workflow_dispatch:
     inputs:
       force_rebuild:
         description: 'Force rebuild even if Railway image unchanged'
@@ -20,16 +20,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get Railway image digest
+      - name: Fetch Railway scripts
+        run: |
+          for f in init-ssl.sh pgbackrest-archive-push-wrapper.sh pgbackrest-backup-watcher.sh pgbackrest-init.sh wrapper.sh; do
+            curl -fsSL "https://raw.githubusercontent.com/railwayapp-templates/postgres-ssl/main/${f}" -o "${f}"
+            chmod +x "${f}"
+          done
+
+      - name: Get Railway source digest
         id: railway
         run: |
-          docker pull ghcr.io/railwayapp-templates/postgres-ssl:latest
-          DIGEST=$(docker inspect ghcr.io/railwayapp-templates/postgres-ssl:latest --format '{{index .RepoDigests 0}}')
-          PG_MAJOR=$(docker inspect ghcr.io/railwayapp-templates/postgres-ssl:latest --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "PG_MAJOR"}}{{index (split . "=") 1}}{{end}}{{end}}')
+          DIGEST=$(curl -s "https://api.github.com/repos/railwayapp-templates/postgres-ssl/commits/main" | jq -r '.sha')
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-          echo "pg_major=$PG_MAJOR" >> $GITHUB_OUTPUT
-          echo "Railway digest: $DIGEST"
-          echo "PG_MAJOR: $PG_MAJOR"
+          echo "pg_major=16" >> $GITHUB_OUTPUT
+          echo "Railway commit: $DIGEST"
 
       - name: Set lowercase owner
         id: owner
@@ -46,10 +50,10 @@ jobs:
           echo "cached_digest=$CACHED_DIGEST" >> $GITHUB_OUTPUT
           if [ "$CACHED_DIGEST" = "${{ steps.railway.outputs.digest }}" ] && [ "${{ inputs.force_rebuild }}" != "true" ]; then
             echo "rebuild=false" >> $GITHUB_OUTPUT
-            echo "No change in Railway image, skipping build."
+            echo "No change in Railway source, skipping build."
           else
             echo "rebuild=true" >> $GITHUB_OUTPUT
-            echo "Railway image changed, rebuilding."
+            echo "Railway source changed or force rebuild, rebuilding."
           fi
 
       - name: Set up QEMU
